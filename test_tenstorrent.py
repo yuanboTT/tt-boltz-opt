@@ -4,10 +4,8 @@ from tenstorrent import (
     PairformerModule,
     DiffusionTransformerModule,
 )
-#from boltz.model.modules.trunk import PairformerModule as PairformerModuleTorch
-#from boltz.model.modules.diffusion import (
-#    DiffusionTransformer as DiffusionTransformerTorch,
-#)
+
+from tests.ttnn.utils_for_testing import assert_with_pcc
 
 torch.set_grad_enabled(False)
 torch.manual_seed(893)
@@ -20,7 +18,6 @@ state_dict = torch.load(
 def median_relative_error(a, b):
     return ((a - b).abs() / b.abs()).median().item()
 
-
 @pytest.mark.parametrize("seq_len", [100, 500, 1000])
 def test_pairformer(seq_len):
     pairformer = PairformerModule(
@@ -30,24 +27,27 @@ def test_pairformer(seq_len):
         att_head_dim=24,
         att_n_heads=16,
     )
-    #pairformer_torch = PairformerModuleTorch(
-    #    token_s=384, token_z=128, num_blocks=2
-    #).eval()
     pairformer_state_dict = filter_dict(state_dict, "pairformer_module")
     pairformer.load_state_dict(
         pairformer_state_dict,
         strict=False,
     )
-    #pairformer_torch.load_state_dict(pairformer_state_dict, strict=False)
-    s = 8 * torch.randn(1, seq_len, 384)
-    z = 26 * torch.randn(1, seq_len, seq_len, 128)
+
+    s = torch.load(f'pairformer_s_input{seq_len}.pt')
+    z = torch.load(f'pairformer_z_input{seq_len}.pt')
     mask = torch.ones(1, seq_len)
     pair_mask = mask[:, :, None] * mask[:, None, :]
     s_tt, z_tt = pairformer(s, z, mask, pair_mask)
-    #s_torch, z_torch = pairformer_torch(s, z, mask, pair_mask)
-    #assert median_relative_error(s_tt, s_torch) < 1e-1, "s not accurate"
-    #assert median_relative_error(z_tt, z_torch) < 1e-1, "z not accurate"
 
+    s_tt_correct = torch.load(f'pairformer_s_sl{seq_len}_tt.pt')
+    z_tt_correct = torch.load(f'pairformer_z_sl{seq_len}_tt.pt')
+    s_torch = torch.load(f'pairformer_s_sl{seq_len}_torch.pt')
+    z_torch = torch.load(f'pairformer_z_sl{seq_len}_torch.pt')
+
+    assert_with_pcc(s_tt_correct,   s_tt, pcc=0.9)
+    assert_with_pcc(z_tt_correct,   z_tt, pcc=0.9)
+    assert_with_pcc(s_torch,        s_tt, pcc=0.9)
+    assert_with_pcc(z_torch,        z_tt, pcc=0.9)
 
 @pytest.mark.parametrize("seq_len", [100, 500, 1000])
 def test_token_transformer(seq_len):
@@ -56,9 +56,6 @@ def test_token_transformer(seq_len):
         dim=768,
         n_heads=16,
     )
-    #token_transformer_torch = DiffusionTransformerTorch(
-    #    depth=2, heads=16, dim=768, dim_single_cond=768, dim_pairwise=128
-    #).eval()
     token_transformer_state_dict = filter_dict(
         state_dict, "structure_module.score_model.token_transformer"
     )
@@ -66,10 +63,9 @@ def test_token_transformer(seq_len):
         token_transformer_state_dict,
         strict=False,
     )
-    #token_transformer_torch.load_state_dict(token_transformer_state_dict, strict=False)
-    a = 3 + 5 * torch.randn(1, seq_len, 768)
-    s = -2 + 42 * torch.randn(1, seq_len, 768)
-    z = 10 * torch.randn(1, seq_len, seq_len, 128)
+    a = torch.load(f'token_transformer_a_input{seq_len}.pt')
+    s = torch.load(f'token_transformer_s_input{seq_len}.pt')
+    z = torch.load(f'token_transformer_z_input{seq_len}.pt')
     mask = torch.ones(1, seq_len)
     a_tt = token_transformer(
         a,
@@ -77,10 +73,8 @@ def test_token_transformer(seq_len):
         z,
         mask,
     )
-    #a_torch = token_transformer_torch(
-    #    a,
-    #    s,
-    #    z,
-    #    mask,
-    #)
-    #assert median_relative_error(a_tt, a_torch) < 1e-1, "a not accurate"
+
+    a_tt_correct = torch.load(f'token_transformer_a_sl{seq_len}_tt.pt')
+    a_torch = torch.load(f'token_transformer_a_sl{seq_len}_torch.pt')
+    assert_with_pcc(a_tt_correct,   a_torch,    pcc=0.9)
+    assert_with_pcc(a_torch,        a_tt,       pcc=0.9)

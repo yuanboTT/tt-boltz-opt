@@ -66,6 +66,7 @@ class TriangleMultiplication(Module):
             epsilon=1e-5,
             compute_kernel_config=self.compute_kernel_config,
         )
+
         x = ttnn.multiply(
             ttnn.linear(
                 x_norm_in, self.in_p, compute_kernel_config=self.compute_kernel_config
@@ -78,6 +79,21 @@ class TriangleMultiplication(Module):
                 )
             ),
         )
+
+        #$$$YF: move tensors to L1
+        #p_in_l1 = ttnn.linear(
+        #    x_norm_in, self.in_p, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG
+        #    )
+        #g_in_l1 = ttnn.linear(
+        #    x_norm_in, self.in_g, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG
+        #    )
+        #s_in_l1 = ttnn.sigmoid_accurate(g_in_l1)
+        #ttnn.deallocate(g_in_l1)
+        #x = ttnn.multiply(p_in_l1, s_in_l1)
+        #ttnn.deallocate(s_in_l1)
+        #ttnn.deallocate(p_in_l1)
+        #x = ttnn.reallocate(x)
+
         dim = int(x.shape[-1] / 2)
         x = ttnn.permute(
             ttnn.matmul(
@@ -98,6 +114,10 @@ class TriangleMultiplication(Module):
             epsilon=1e-5,
             compute_kernel_config=self.compute_kernel_config,
         )
+        
+        #YF: 
+        #ttnn.deallocate(x)
+
         x = ttnn.multiply(
             ttnn.linear(
                 x_norm_out, self.out_p, compute_kernel_config=self.compute_kernel_config
@@ -110,6 +130,21 @@ class TriangleMultiplication(Module):
                 )
             ),
         )
+
+        #$$$YF: move tensors to L1
+        #p_in_l1 = ttnn.linear(
+        #    x_norm_out, self.out_p, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG
+        #    )
+        #g_in_l1 = ttnn.linear(
+        #    x_norm_in, self.out_g, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG
+        #    )
+        #s_in_l1 = ttnn.sigmoid_accurate(g_in_l1)
+        #ttnn.deallocate(g_in_l1)
+        #x = ttnn.multiply(p_in_l1, s_in_l1)
+        #ttnn.deallocate(s_in_l1)
+        #ttnn.deallocate(p_in_l1)
+        #x = ttnn.reallocate(x)
+
         return x
 
 
