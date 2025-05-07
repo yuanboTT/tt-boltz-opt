@@ -33,16 +33,16 @@ def test_pairformer(seq_len):
         strict=False,
     )
 
-    s = torch.load(f'pairformer_s_input{seq_len}.pt')
-    z = torch.load(f'pairformer_z_input{seq_len}.pt')
+    s = torch.load(f'test_data/pairformer_s_input{seq_len}.pt')
+    z = torch.load(f'test_data/pairformer_z_input{seq_len}.pt')
     mask = torch.ones(1, seq_len)
     pair_mask = mask[:, :, None] * mask[:, None, :]
     s_tt, z_tt = pairformer(s, z, mask, pair_mask)
 
-    s_tt_correct = torch.load(f'pairformer_s_sl{seq_len}_tt.pt')
-    z_tt_correct = torch.load(f'pairformer_z_sl{seq_len}_tt.pt')
-    s_torch = torch.load(f'pairformer_s_sl{seq_len}_torch.pt')
-    z_torch = torch.load(f'pairformer_z_sl{seq_len}_torch.pt')
+    s_tt_correct = torch.load(f'test_data/pairformer_s_sl{seq_len}_tt.pt')
+    z_tt_correct = torch.load(f'test_data/pairformer_z_sl{seq_len}_tt.pt')
+    s_torch = torch.load(f'test_data/pairformer_s_sl{seq_len}_torch.pt')
+    z_torch = torch.load(f'test_data/pairformer_z_sl{seq_len}_torch.pt')
 
     assert_with_pcc(s_tt_correct,   s_tt, pcc=0.9)
     assert_with_pcc(z_tt_correct,   z_tt, pcc=0.9)
@@ -63,9 +63,9 @@ def test_token_transformer(seq_len):
         token_transformer_state_dict,
         strict=False,
     )
-    a = torch.load(f'token_transformer_a_input{seq_len}.pt')
-    s = torch.load(f'token_transformer_s_input{seq_len}.pt')
-    z = torch.load(f'token_transformer_z_input{seq_len}.pt')
+    a = torch.load(f'test_data/token_transformer_a_input{seq_len}.pt')
+    s = torch.load(f'test_data/token_transformer_s_input{seq_len}.pt')
+    z = torch.load(f'test_data/token_transformer_z_input{seq_len}.pt')
     mask = torch.ones(1, seq_len)
     a_tt = token_transformer(
         a,
@@ -74,7 +74,7 @@ def test_token_transformer(seq_len):
         mask,
     )
 
-    a_tt_correct = torch.load(f'token_transformer_a_sl{seq_len}_tt.pt')
-    a_torch = torch.load(f'token_transformer_a_sl{seq_len}_torch.pt')
+    a_tt_correct = torch.load(f'test_data/token_transformer_a_sl{seq_len}_tt.pt')
+    a_torch = torch.load(f'test_data/token_transformer_a_sl{seq_len}_torch.pt')
     assert_with_pcc(a_tt_correct,   a_torch,    pcc=0.9)
     assert_with_pcc(a_torch,        a_tt,       pcc=0.9)
