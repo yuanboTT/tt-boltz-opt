@@ -6,6 +6,7 @@ TRIANGLE_ATTENTION_CHUNK_SIZE = 64
 TRANSITION_CHUNK_SIZE = 64
 mesh_device = None
 
+USE_L1_CACHE = False
 
 def filter_dict(state_dict: dict, prefix: str, remove: str = "") -> dict:
     if not prefix:
@@ -36,7 +37,8 @@ class Module:
             transform(self.state_dict[key]),
             layout=ttnn.TILE_LAYOUT,
             device=mesh_device.get_devices()[0],
-            dtype=ttnn.float32,
+            dtype=ttnn.bfloat16,
+            #dtype=ttnn.float32,
         )
 
 
@@ -67,32 +69,36 @@ class TriangleMultiplication(Module):
             compute_kernel_config=self.compute_kernel_config,
         )
 
-        x = ttnn.multiply(
-            ttnn.linear(
-                x_norm_in, self.in_p, compute_kernel_config=self.compute_kernel_config
-            ),
-            ttnn.sigmoid_accurate(
+        if not USE_L1_CACHE:
+            x = ttnn.multiply(
                 ttnn.linear(
-                    x_norm_in,
-                    self.in_g,
-                    compute_kernel_config=self.compute_kernel_config,
+                    x_norm_in, self.in_p, compute_kernel_config=self.compute_kernel_config
+                ),
+                ttnn.sigmoid_accurate(
+                    ttnn.linear(
+                        x_norm_in,
+                        self.in_g,
+                        compute_kernel_config=self.compute_kernel_config,
+                    )
+                ),
+            )
+        else:
+            #$$$YF: move tensors to L1
+            p_in_l1 = ttnn.linear(
+                x_norm_in, self.in_p, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG
                 )
-            ),
-        )
+            g_in_l1 = ttnn.linear(
+                x_norm_in, self.in_g, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG
+                )
+            s_in_l1 = ttnn.sigmoid_accurate(g_in_l1)
 
-        #$$$YF: move tensors to L1
-        #p_in_l1 = ttnn.linear(
-        #    x_norm_in, self.in_p, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG
-        #    )
-        #g_in_l1 = ttnn.linear(
-        #    x_norm_in, self.in_g, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG
-        #    )
-        #s_in_l1 = ttnn.sigmoid_accurate(g_in_l1)
-        #ttnn.deallocate(g_in_l1)
-        #x = ttnn.multiply(p_in_l1, s_in_l1)
-        #ttnn.deallocate(s_in_l1)
-        #ttnn.deallocate(p_in_l1)
-        #x = ttnn.reallocate(x)
+            ttnn.deallocate(g_in_l1)
+
+            x = ttnn.multiply(p_in_l1, s_in_l1)
+
+            ttnn.deallocate(s_in_l1)
+            ttnn.deallocate(p_in_l1)
+            x = ttnn.reallocate(x)
 
         dim = int(x.shape[-1] / 2)
         x = ttnn.permute(
@@ -115,35 +121,38 @@ class TriangleMultiplication(Module):
             compute_kernel_config=self.compute_kernel_config,
         )
         
-        #YF: 
-        #ttnn.deallocate(x)
-
-        x = ttnn.multiply(
-            ttnn.linear(
-                x_norm_out, self.out_p, compute_kernel_config=self.compute_kernel_config
-            ),
-            ttnn.sigmoid_accurate(
+        if not USE_L1_CACHE:
+            x = ttnn.multiply(
                 ttnn.linear(
-                    x_norm_in,
-                    self.out_g,
-                    compute_kernel_config=self.compute_kernel_config,
+                    x_norm_out, self.out_p, compute_kernel_config=self.compute_kernel_config
+                ),
+                ttnn.sigmoid_accurate(
+                    ttnn.linear(
+                        x_norm_in,
+                        self.out_g,
+                        compute_kernel_config=self.compute_kernel_config,
+                    )
+                ),
+            )
+        else:
+            #$$$YF: move tensors to L1
+            ttnn.deallocate(x)
+            p_in_l1 = ttnn.linear(
+                x_norm_out, self.out_p, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG
                 )
-            ),
-        )
+            g_in_l1 = ttnn.linear(
+                x_norm_in, self.out_g, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG
+                )
 
-        #$$$YF: move tensors to L1
-        #p_in_l1 = ttnn.linear(
-        #    x_norm_out, self.out_p, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG
-        #    )
-        #g_in_l1 = ttnn.linear(
-        #    x_norm_in, self.out_g, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG
-        #    )
-        #s_in_l1 = ttnn.sigmoid_accurate(g_in_l1)
-        #ttnn.deallocate(g_in_l1)
-        #x = ttnn.multiply(p_in_l1, s_in_l1)
-        #ttnn.deallocate(s_in_l1)
-        #ttnn.deallocate(p_in_l1)
-        #x = ttnn.reallocate(x)
+            s_in_l1 = ttnn.sigmoid_accurate(g_in_l1)
+
+            ttnn.deallocate(g_in_l1)
+
+            x = ttnn.multiply(p_in_l1, s_in_l1)
+
+            ttnn.deallocate(s_in_l1)
+            ttnn.deallocate(p_in_l1)
+            x = ttnn.reallocate(x)
 
         return x
 
@@ -174,21 +183,42 @@ class TriangleAttention(Module):
         x = ttnn.reshape(x, tuple(x.shape)[1:])
         if self.ending:
             x = ttnn.permute(x, (1, 0, 2))  # THIS CAUSES CACHE -> RESHAPE PROBLEM
-        x = ttnn.layer_norm(
-            x,
-            weight=self.layer_norm_weight,
-            bias=self.layer_norm_bias,
-            epsilon=1e-5,
-            compute_kernel_config=self.compute_kernel_config,
-        )
-        triangle_bias = ttnn.linear(
-            x,
-            self.bias_weight,
-            compute_kernel_config=self.compute_kernel_config,
-        )
+
+        if not USE_L1_CACHE:
+            x = ttnn.layer_norm(
+                x,
+                weight=self.layer_norm_weight,
+                bias=self.layer_norm_bias,
+                epsilon=1e-5,
+                compute_kernel_config=self.compute_kernel_config,
+            )
+
+            triangle_bias = ttnn.linear(
+                x,
+                self.bias_weight,
+                compute_kernel_config=self.compute_kernel_config,
+            )
+        else:
+            x_in_L1 = ttnn.layer_norm(
+                x,
+                weight=self.layer_norm_weight,
+                bias=self.layer_norm_bias,
+                epsilon=1e-5,
+                compute_kernel_config=self.compute_kernel_config,
+                memory_config=ttnn.L1_MEMORY_CONFIG,
+            )
+            ttnn.deallocate(x)
+
+            triangle_bias = ttnn.linear(
+                x_in_L1,
+                self.bias_weight,
+                compute_kernel_config=self.compute_kernel_config,
+            )
+
         triangle_bias = ttnn.reshape(triangle_bias, (1, *triangle_bias.shape))
         triangle_bias = ttnn.permute(triangle_bias, (3, 0, 1, 2))
         two_devices = mesh_device.get_num_devices() == 2
+
         if two_devices:
             triangle_bias = ttnn.aggregate_as_tensor(
                 [
@@ -209,22 +239,44 @@ class TriangleAttention(Module):
 
         o_chunks = []
         for chunk_start in range(0, x.shape[0], TRIANGLE_ATTENTION_CHUNK_SIZE):
-            x_chunk = x[
-                chunk_start : min(
-                    chunk_start + TRIANGLE_ATTENTION_CHUNK_SIZE, x.shape[0]
-                ),
-                :,
-                :,
-            ]
-            q = ttnn.linear(
-                x_chunk, self.q_weight, compute_kernel_config=self.compute_kernel_config
-            )
-            k = ttnn.linear(
-                x_chunk, self.k_weight, compute_kernel_config=self.compute_kernel_config
-            )
-            v = ttnn.linear(
-                x_chunk, self.v_weight, compute_kernel_config=self.compute_kernel_config
-            )
+            if not USE_L1_CACHE:
+                x_chunk = x[
+                    chunk_start : min(
+                        chunk_start + TRIANGLE_ATTENTION_CHUNK_SIZE, x.shape[0]
+                    ),
+                    :,
+                    :,
+                ]
+                q = ttnn.linear(
+                    x_chunk, self.q_weight, compute_kernel_config=self.compute_kernel_config
+                )
+                k = ttnn.linear(
+                    x_chunk, self.k_weight, compute_kernel_config=self.compute_kernel_config
+                )
+                v = ttnn.linear(
+                    x_chunk, self.v_weight, compute_kernel_config=self.compute_kernel_config
+                )
+            else:
+                x_chunk = x_in_L1[
+                    chunk_start : min(
+                        chunk_start + TRIANGLE_ATTENTION_CHUNK_SIZE, x_in_L1.shape[0]
+                    ),
+                    :,
+                    :,
+                ]
+                q = ttnn.linear(
+                    x_chunk, self.q_weight, compute_kernel_config=self.compute_kernel_config,
+                    memory_config=ttnn.L1_MEMORY_CONFIG,
+                )
+                k = ttnn.linear(
+                    x_chunk, self.k_weight, compute_kernel_config=self.compute_kernel_config,
+                    memory_config=ttnn.L1_MEMORY_CONFIG,
+                )
+                v = ttnn.linear(
+                    x_chunk, self.v_weight, compute_kernel_config=self.compute_kernel_config,
+                    memory_config=ttnn.L1_MEMORY_CONFIG,
+                )
+
             q = ttnn.permute(q, (2, 0, 1))
             k = ttnn.permute(k, (2, 0, 1))
             v = ttnn.permute(v, (2, 0, 1))
@@ -271,7 +323,13 @@ class TriangleAttention(Module):
                         ).to(mesh_device.get_devices()[1]),
                     ]
                 )
-            a = ttnn.matmul(q, k, compute_kernel_config=self.compute_kernel_config)
+
+            a = ttnn.matmul(q, k, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.DRAM_MEMORY_CONFIG,)
+
+            if USE_L1_CACHE:
+                ttnn.deallocate(q)
+                ttnn.deallocate(k)
+
             a = ttnn.multiply(a, self.head_dim**-0.5)
             a = ttnn.add(a, triangle_bias)
             a = ttnn.softmax(
@@ -285,23 +343,44 @@ class TriangleAttention(Module):
                 ),
                 numeric_stable=True,
             )
-            o = ttnn.matmul(a, v, compute_kernel_config=self.compute_kernel_config)
+
+            if not USE_L1_CACHE:
+                o = ttnn.matmul(a, v, compute_kernel_config=self.compute_kernel_config)
+            else:
+                o = ttnn.matmul(a, v, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG,)
+                ttnn.deallocate(v)
+
             if two_devices:
                 o = ttnn.all_gather(o, dim=0)
                 o = ttnn.get_device_tensors(o)[0]
             o_chunks.append(o)
+
         o = ttnn.concat(o_chunks, dim=1)
         o = ttnn.permute(o, (0, 3, 1, 2))
         o = ttnn.reshape(o, (-1, *tuple(o.shape)[2:]))
         o = ttnn.permute(o, (1, 2, 0))
-        g = ttnn.linear(
-            x, self.g_weight, compute_kernel_config=self.compute_kernel_config
-        )
+
+        if not USE_L1_CACHE:
+            g = ttnn.linear(
+                x, self.g_weight, compute_kernel_config=self.compute_kernel_config
+            )
+        else: 
+            g = ttnn.linear(
+                x_in_L1, self.g_weight, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG,
+            )
+           
         g = ttnn.sigmoid_accurate(g)
         o = ttnn.multiply(o, g)
-        x = ttnn.linear(
-            o, self.o_weight, compute_kernel_config=self.compute_kernel_config
-        )
+
+        if not USE_L1_CACHE:
+            x = ttnn.linear(
+                o, self.o_weight, compute_kernel_config=self.compute_kernel_config
+            )
+        else:
+            x = ttnn.linear(
+                o, self.o_weight, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG,
+            )
+
         if self.ending:
             x = ttnn.permute(x, (1, 0, 2))
         x = ttnn.reshape(x, (1, *x.shape))
@@ -739,11 +818,13 @@ class TorchWrapper(nn.Module):
             x,
             device=mesh_device.get_devices()[0],
             layout=ttnn.TILE_LAYOUT,
-            dtype=ttnn.float32,
+            dtype=ttnn.bfloat16,
+            #dtype=ttnn.float32,
         )
 
     def _to_torch(self, x: ttnn.Tensor) -> torch.Tensor:
         return torch.Tensor(ttnn.to_torch(x)).to(torch.float32)
+        #return torch.Tensor(ttnn.to_torch(x)).to(torch.float32)
 
     def __del__(self):
         global mesh_device
