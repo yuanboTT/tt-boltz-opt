@@ -6,7 +6,7 @@ TRIANGLE_ATTENTION_CHUNK_SIZE = 64
 TRANSITION_CHUNK_SIZE = 64
 mesh_device = None
 
-USE_L1_CACHE = True
+import time
 
 def filter_dict(state_dict: dict, prefix: str, remove: str = "") -> dict:
     if not prefix:
@@ -38,7 +38,6 @@ class Module:
             layout=ttnn.TILE_LAYOUT,
             device=mesh_device.get_devices()[0],
             dtype=ttnn.bfloat16,
-            #dtype=ttnn.float32,
         )
 
 
@@ -61,6 +60,7 @@ class TriangleMultiplication(Module):
         self.out_g = self.torch_to_tt("g_out.weight")
 
     def __call__(self, x: ttnn.Tensor) -> ttnn.Tensor:
+        #print(f'$$$YF: call TriangleMultiplication with tensor shape {x.shape}')
         x_norm_in = ttnn.layer_norm(
             x,
             weight=self.in_norm_weight,
@@ -68,37 +68,36 @@ class TriangleMultiplication(Module):
             epsilon=1e-5,
             compute_kernel_config=self.compute_kernel_config,
         )
+        #x = ttnn.multiply(
+        #    ttnn.linear(
+        #        x_norm_in, self.in_p, compute_kernel_config=self.compute_kernel_config
+        #    ),
+        #    ttnn.sigmoid_accurate(
+        #        ttnn.linear(
+        #            x_norm_in,
+        #            self.in_g,
+        #            compute_kernel_config=self.compute_kernel_config,
+        #        )
+        #    ),
+        #)
 
-        if not USE_L1_CACHE:
-            x = ttnn.multiply(
-                ttnn.linear(
-                    x_norm_in, self.in_p, compute_kernel_config=self.compute_kernel_config
-                ),
-                ttnn.sigmoid_accurate(
-                    ttnn.linear(
-                        x_norm_in,
-                        self.in_g,
-                        compute_kernel_config=self.compute_kernel_config,
-                    )
-                ),
+        p_in_l1 = ttnn.linear(
+            x_norm_in, self.in_p, compute_kernel_config=self.compute_kernel_config,
+            memory_config=ttnn.L1_MEMORY_CONFIG
             )
-        else:
-            #$$$YF: move tensors to L1
-            p_in_l1 = ttnn.linear(
-                x_norm_in, self.in_p, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG
-                )
-            g_in_l1 = ttnn.linear(
-                x_norm_in, self.in_g, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG
-                )
-            s_in_l1 = ttnn.sigmoid_accurate(g_in_l1)
+        g_in_l1 = ttnn.linear(
+            x_norm_in, self.in_g, compute_kernel_config=self.compute_kernel_config,
+            memory_config=ttnn.L1_MEMORY_CONFIG
+            )
+        s_in_l1 = ttnn.sigmoid_accurate(g_in_l1)
 
-            ttnn.deallocate(g_in_l1)
+        ttnn.deallocate(g_in_l1)
 
-            x = ttnn.multiply(p_in_l1, s_in_l1)
+        x_in_l1 = ttnn.multiply(p_in_l1, s_in_l1)
 
-            ttnn.deallocate(s_in_l1)
-            ttnn.deallocate(p_in_l1)
-            x = ttnn.reallocate(x)
+        ttnn.deallocate(s_in_l1)
+        ttnn.deallocate(p_in_l1)
+        x = ttnn.reallocate(x_in_l1)
 
         dim = int(x.shape[-1] / 2)
         x = ttnn.permute(
@@ -110,6 +109,7 @@ class TriangleMultiplication(Module):
                     x[:, :, :, dim:], (0, 3) + ((1, 2) if self.ending else (2, 1))
                 ),
                 compute_kernel_config=self.compute_kernel_config,
+                memory_config=ttnn.L1_MEMORY_CONFIG,
             ),
             (0, 2, 3, 1),
         )
@@ -120,39 +120,42 @@ class TriangleMultiplication(Module):
             epsilon=1e-5,
             compute_kernel_config=self.compute_kernel_config,
         )
-        
-        if not USE_L1_CACHE:
-            x = ttnn.multiply(
-                ttnn.linear(
-                    x_norm_out, self.out_p, compute_kernel_config=self.compute_kernel_config
-                ),
-                ttnn.sigmoid_accurate(
-                    ttnn.linear(
-                        x_norm_in,
-                        self.out_g,
-                        compute_kernel_config=self.compute_kernel_config,
-                    )
-                ),
+
+        ttnn.deallocate(x)
+
+        #x = ttnn.multiply(
+        #    ttnn.linear(
+        #        x_norm_out, self.out_p, compute_kernel_config=self.compute_kernel_config
+        #    ),
+        #    ttnn.sigmoid_accurate(
+        #        ttnn.linear(
+        #            x_norm_in,
+        #            self.out_g,
+        #            compute_kernel_config=self.compute_kernel_config,
+        #        )
+        #    ),
+        #)
+
+        p_in_l1 = ttnn.linear(
+            x_norm_out, self.out_p, compute_kernel_config=self.compute_kernel_config,
+            memory_config=ttnn.L1_MEMORY_CONFIG
             )
-        else:
-            #$$$YF: move tensors to L1
-            ttnn.deallocate(x)
-            p_in_l1 = ttnn.linear(
-                x_norm_out, self.out_p, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG
-                )
-            g_in_l1 = ttnn.linear(
-                x_norm_in, self.out_g, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG
-                )
 
-            s_in_l1 = ttnn.sigmoid_accurate(g_in_l1)
+        g_in_l1 = ttnn.linear(
+            x_norm_in, self.out_g, compute_kernel_config=self.compute_kernel_config,
+            memory_config=ttnn.L1_MEMORY_CONFIG
+            )
 
-            ttnn.deallocate(g_in_l1)
+        s_in_l1 = ttnn.sigmoid_accurate(g_in_l1)
 
-            x = ttnn.multiply(p_in_l1, s_in_l1)
+        ttnn.deallocate(g_in_l1)
 
-            ttnn.deallocate(s_in_l1)
-            ttnn.deallocate(p_in_l1)
-            x = ttnn.reallocate(x)
+        x_in_l1 = ttnn.multiply(p_in_l1, s_in_l1)
+
+        ttnn.deallocate(s_in_l1)
+        ttnn.deallocate(p_in_l1)
+        
+        x = ttnn.reallocate(x_in_l1)
 
         return x
 
@@ -180,45 +183,28 @@ class TriangleAttention(Module):
         self.g_weight = self.torch_to_tt("linear_g.weight")
 
     def __call__(self, x: ttnn.Tensor) -> ttnn.Tensor:
+        #print(f'$$$YF: call TriangleAttention with tensor shape {x.shape}')
         x = ttnn.reshape(x, tuple(x.shape)[1:])
         if self.ending:
             x = ttnn.permute(x, (1, 0, 2))  # THIS CAUSES CACHE -> RESHAPE PROBLEM
+        x_in_l1 = ttnn.layer_norm(
+            x,
+            weight=self.layer_norm_weight,
+            bias=self.layer_norm_bias,
+            epsilon=1e-5,
+            compute_kernel_config=self.compute_kernel_config,
+        )
+        ttnn.deallocate(x)
 
-        if not USE_L1_CACHE:
-            x = ttnn.layer_norm(
-                x,
-                weight=self.layer_norm_weight,
-                bias=self.layer_norm_bias,
-                epsilon=1e-5,
-                compute_kernel_config=self.compute_kernel_config,
-            )
-
-            triangle_bias = ttnn.linear(
-                x,
-                self.bias_weight,
-                compute_kernel_config=self.compute_kernel_config,
-            )
-        else:
-            x_in_L1 = ttnn.layer_norm(
-                x,
-                weight=self.layer_norm_weight,
-                bias=self.layer_norm_bias,
-                epsilon=1e-5,
-                compute_kernel_config=self.compute_kernel_config,
-                memory_config=ttnn.L1_MEMORY_CONFIG,
-            )
-            ttnn.deallocate(x)
-
-            triangle_bias = ttnn.linear(
-                x_in_L1,
-                self.bias_weight,
-                compute_kernel_config=self.compute_kernel_config,
-            )
-
+        triangle_bias = ttnn.linear(
+            x_in_l1,
+            self.bias_weight,
+            compute_kernel_config=self.compute_kernel_config,
+            memory_config=ttnn.L1_MEMORY_CONFIG
+        )
         triangle_bias = ttnn.reshape(triangle_bias, (1, *triangle_bias.shape))
         triangle_bias = ttnn.permute(triangle_bias, (3, 0, 1, 2))
         two_devices = mesh_device.get_num_devices() == 2
-
         if two_devices:
             triangle_bias = ttnn.aggregate_as_tensor(
                 [
@@ -239,44 +225,25 @@ class TriangleAttention(Module):
 
         o_chunks = []
         for chunk_start in range(0, x.shape[0], TRIANGLE_ATTENTION_CHUNK_SIZE):
-            if not USE_L1_CACHE:
-                x_chunk = x[
-                    chunk_start : min(
-                        chunk_start + TRIANGLE_ATTENTION_CHUNK_SIZE, x.shape[0]
-                    ),
-                    :,
-                    :,
-                ]
-                q = ttnn.linear(
-                    x_chunk, self.q_weight, compute_kernel_config=self.compute_kernel_config
-                )
-                k = ttnn.linear(
-                    x_chunk, self.k_weight, compute_kernel_config=self.compute_kernel_config
-                )
-                v = ttnn.linear(
-                    x_chunk, self.v_weight, compute_kernel_config=self.compute_kernel_config
-                )
-            else:
-                x_chunk = x_in_L1[
-                    chunk_start : min(
-                        chunk_start + TRIANGLE_ATTENTION_CHUNK_SIZE, x_in_L1.shape[0]
-                    ),
-                    :,
-                    :,
-                ]
-                q = ttnn.linear(
-                    x_chunk, self.q_weight, compute_kernel_config=self.compute_kernel_config,
-                    memory_config=ttnn.L1_MEMORY_CONFIG,
-                )
-                k = ttnn.linear(
-                    x_chunk, self.k_weight, compute_kernel_config=self.compute_kernel_config,
-                    memory_config=ttnn.L1_MEMORY_CONFIG,
-                )
-                v = ttnn.linear(
-                    x_chunk, self.v_weight, compute_kernel_config=self.compute_kernel_config,
-                    memory_config=ttnn.L1_MEMORY_CONFIG,
-                )
-
+            x_chunk = x_in_l1[
+                chunk_start : min(
+                    chunk_start + TRIANGLE_ATTENTION_CHUNK_SIZE, x.shape[0]
+                ),
+                :,
+                :,
+            ]
+            q = ttnn.linear(
+                x_chunk, self.q_weight, compute_kernel_config=self.compute_kernel_config,
+                memory_config=ttnn.L1_MEMORY_CONFIG
+            )
+            k = ttnn.linear(
+                x_chunk, self.k_weight, compute_kernel_config=self.compute_kernel_config,
+                memory_config=ttnn.L1_MEMORY_CONFIG
+            )
+            v = ttnn.linear(
+                x_chunk, self.v_weight, compute_kernel_config=self.compute_kernel_config,
+                memory_config=ttnn.L1_MEMORY_CONFIG
+            )
             q = ttnn.permute(q, (2, 0, 1))
             k = ttnn.permute(k, (2, 0, 1))
             v = ttnn.permute(v, (2, 0, 1))
@@ -323,14 +290,12 @@ class TriangleAttention(Module):
                         ).to(mesh_device.get_devices()[1]),
                     ]
                 )
+            a_in_mem = ttnn.matmul(q, k, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.DRAM_MEMORY_CONFIG)
 
-            a = ttnn.matmul(q, k, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.DRAM_MEMORY_CONFIG,)
+            ttnn.deallocate(q)
+            ttnn.deallocate(k)
 
-            if USE_L1_CACHE:
-                ttnn.deallocate(q)
-                ttnn.deallocate(k)
-
-            a = ttnn.multiply(a, self.head_dim**-0.5)
+            a = ttnn.multiply(a_in_mem, self.head_dim**-0.5)
             a = ttnn.add(a, triangle_bias)
             a = ttnn.softmax(
                 a,
@@ -343,48 +308,32 @@ class TriangleAttention(Module):
                 ),
                 numeric_stable=True,
             )
-
-            if not USE_L1_CACHE:
-                o = ttnn.matmul(a, v, compute_kernel_config=self.compute_kernel_config)
-            else:
-                o = ttnn.matmul(a, v, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG,)
-                ttnn.deallocate(v)
-
+            o = ttnn.matmul(a, v, compute_kernel_config=self.compute_kernel_config,
+                memory_config=ttnn.L1_MEMORY_CONFIG
+            )
             if two_devices:
                 o = ttnn.all_gather(o, dim=0)
                 o = ttnn.get_device_tensors(o)[0]
             o_chunks.append(o)
-
         o = ttnn.concat(o_chunks, dim=1)
         o = ttnn.permute(o, (0, 3, 1, 2))
         o = ttnn.reshape(o, (-1, *tuple(o.shape)[2:]))
         o = ttnn.permute(o, (1, 2, 0))
-
-        if not USE_L1_CACHE:
-            g = ttnn.linear(
-                x, self.g_weight, compute_kernel_config=self.compute_kernel_config
-            )
-        else: 
-            g = ttnn.linear(
-                x_in_L1, self.g_weight, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG,
-            )
-           
+        g = ttnn.linear(
+            x_in_l1, self.g_weight, compute_kernel_config=self.compute_kernel_config,
+            memory_config=ttnn.L1_MEMORY_CONFIG
+        )
         g = ttnn.sigmoid_accurate(g)
         o = ttnn.multiply(o, g)
-
-        if not USE_L1_CACHE:
-            x = ttnn.linear(
-                o, self.o_weight, compute_kernel_config=self.compute_kernel_config
-            )
-        else:
-            x = ttnn.linear(
-                o, self.o_weight, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG,
-            )
-
+        x = ttnn.linear(
+            o, self.o_weight, compute_kernel_config=self.compute_kernel_config,
+            memory_config=ttnn.L1_MEMORY_CONFIG
+        )
         if self.ending:
             x = ttnn.permute(x, (1, 0, 2))
         x = ttnn.reshape(x, (1, *x.shape))
         return x
+
 
 class AttentionPairBias(Module):
     def __init__(
@@ -421,34 +370,32 @@ class AttentionPairBias(Module):
                 epsilon=1e-5,
                 compute_kernel_config=self.compute_kernel_config,
             )
-        q_in_l1 = ttnn.linear(
+        q = ttnn.linear(
             s,
             self.q_weight,
             bias=self.q_bias,
             compute_kernel_config=self.compute_kernel_config,
-            memory_config=ttnn.L1_MEMORY_CONFIG,
+            memory_config=ttnn.L1_MEMORY_CONFIG
         )
-        k_in_l1 = ttnn.linear(
+        k = ttnn.linear(
             s, self.k_weight, compute_kernel_config=self.compute_kernel_config,
-            memory_config=ttnn.L1_MEMORY_CONFIG,
+            memory_config=ttnn.L1_MEMORY_CONFIG
         )
-        v_in_l1 = ttnn.linear(
+        v = ttnn.linear(
             s, self.v_weight, compute_kernel_config=self.compute_kernel_config,
-            memory_config=ttnn.L1_MEMORY_CONFIG,
+            memory_config=ttnn.L1_MEMORY_CONFIG
         )
-        q = ttnn.permute(q_in_l1, (2, 0, 1))
-        k = ttnn.permute(k_in_l1, (2, 0, 1))
-        v = ttnn.permute(v_in_l1, (2, 0, 1))
+        q = ttnn.permute(q, (2, 0, 1))
+        k = ttnn.permute(k, (2, 0, 1))
+        v = ttnn.permute(v, (2, 0, 1))
         q = ttnn.reshape(q, (self.n_heads, self.head_dim, *tuple(q.shape)[1:]))
         k = ttnn.reshape(k, (self.n_heads, self.head_dim, *tuple(k.shape)[1:]))
         v = ttnn.reshape(v, (self.n_heads, self.head_dim, *tuple(v.shape)[1:]))
         q = ttnn.permute(q, (0, 2, 3, 1))
         k = ttnn.permute(k, (0, 2, 1, 3))
         v = ttnn.permute(v, (0, 2, 3, 1))
-        a_in_l1 = ttnn.matmul(q, k, compute_kernel_config=self.compute_kernel_config, 
-            memory_config=ttnn.L1_MEMORY_CONFIG,
-        )
-        a = ttnn.multiply(a_in_l1, self.head_dim**-0.5)
+        a = ttnn.matmul(q, k, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG)
+        a = ttnn.multiply(a, self.head_dim**-0.5)
         z = ttnn.layer_norm(
             z,
             weight=self.z_norm_weight,
@@ -458,7 +405,7 @@ class AttentionPairBias(Module):
         )
         z = ttnn.linear(
             z, self.z_weight, compute_kernel_config=self.compute_kernel_config,
-            memory_config=ttnn.L1_MEMORY_CONFIG,
+            memory_config=ttnn.L1_MEMORY_CONFIG
         )
         z = ttnn.permute(z, (3, 0, 1, 2))
         a = ttnn.add(a, z)
@@ -473,21 +420,19 @@ class AttentionPairBias(Module):
             ),
             numeric_stable=True,
         )
-        o = ttnn.matmul(a, v, compute_kernel_config=self.compute_kernel_config,
-            memory_config=ttnn.L1_MEMORY_CONFIG,
-        )
+        o = ttnn.matmul(a, v, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.L1_MEMORY_CONFIG)
         o = ttnn.permute(o, (0, 3, 1, 2))
         o = ttnn.reshape(o, (-1, *tuple(o.shape)[2:]))
         o = ttnn.permute(o, (1, 2, 0))
         g = ttnn.linear(
             s, self.g_weight, compute_kernel_config=self.compute_kernel_config,
-            memory_config=ttnn.L1_MEMORY_CONFIG,
+            memory_config=ttnn.L1_MEMORY_CONFIG
         )
         g = ttnn.sigmoid_accurate(g)
         o = ttnn.multiply(o, g)
         x = ttnn.linear(
             o, self.o_weight, compute_kernel_config=self.compute_kernel_config,
-            memory_config=ttnn.L1_MEMORY_CONFIG,
+            memory_config=ttnn.L1_MEMORY_CONFIG
         )
         return x
 
@@ -506,6 +451,7 @@ class Transition(Module):
         self.fc3_weight = self.torch_to_tt("fc3.weight")
 
     def __call__(self, x: ttnn.Tensor) -> ttnn.Tensor:
+        #print(f'$$$YF: call Transition with tensor shape {x.shape}')
         def f(x):
             x_norm = ttnn.layer_norm(
                 x,
@@ -519,18 +465,20 @@ class Transition(Module):
                 self.fc1_weight,
                 activation="silu",
                 compute_kernel_config=self.compute_kernel_config,
+                memory_config=ttnn.DRAM_MEMORY_CONFIG
             )
             x_2 = ttnn.linear(
                 x_norm,
                 self.fc2_weight,
                 compute_kernel_config=self.compute_kernel_config,
+                memory_config=ttnn.DRAM_MEMORY_CONFIG
             )
             x = ttnn.multiply(x_1, x_2)
             x = ttnn.linear(
                 x,
                 self.fc3_weight,
                 compute_kernel_config=self.compute_kernel_config,
-                memory_config=ttnn.L1_MEMORY_CONFIG,
+                memory_config=ttnn.L1_MEMORY_CONFIG
             )
             return x
 
@@ -599,37 +547,62 @@ class PairformerLayer(Module):
     def __call__(
         self, s: ttnn.Tensor, z: ttnn.Tensor
     ) -> Tuple[ttnn.Tensor, ttnn.Tensor]:
+
+        start = time.time()
         z = ttnn.add(
             z,
             self.triangle_multiplication_start(z),
-            memory_config=ttnn.L1_MEMORY_CONFIG,
+            memory_config=ttnn.L1_MEMORY_CONFIG
         )
+        end = time.time()
+        print(f'$$$YF: triangle_multiplication_start time: {end - start:.4f} seconds')
+
+        start = time.time()
         z = ttnn.add(
             z,
             self.triangle_multiplication_end(z),
-            memory_config=ttnn.L1_MEMORY_CONFIG,
+            memory_config=ttnn.L1_MEMORY_CONFIG
         )
+        end = time.time()
+        print(f'$$$YF: triangle_multiplication_end time: {end - start:.4f} seconds')
+
+        start = time.time()
         z = ttnn.add(
             z,
             self.triangle_attention_start(z),
-            memory_config=ttnn.L1_MEMORY_CONFIG,
+            memory_config=ttnn.L1_MEMORY_CONFIG
         )
+        end = time.time()
+        print(f'$$$YF: triangle_attention_start time: {end - start:.4f} seconds')
+
+        start = time.time()
         z = ttnn.add(
             z,
             self.triangle_attention_end(z),
-            memory_config=ttnn.L1_MEMORY_CONFIG,
+            memory_config=ttnn.L1_MEMORY_CONFIG
         )
-        z = ttnn.add(z, self.transition_z(z),
-            memory_config=ttnn.L1_MEMORY_CONFIG,
-        )
+        end = time.time()
+        print(f'$$$YF: triangle_attention_end time: {end - start:.4f} seconds')
+
+        start = time.time()
+        z = ttnn.add(z, self.transition_z(z), memory_config=ttnn.L1_MEMORY_CONFIG)
+        end = time.time()
+        print(f'$$$YF: transition_z time: {end - start:.4f} seconds')
+
+        start = time.time()
         s = ttnn.add(
             s,
             self.attention_pair_bias(s, z),
-            memory_config=ttnn.L1_MEMORY_CONFIG,
+            memory_config=ttnn.L1_MEMORY_CONFIG
         )
-        s = ttnn.add(s, self.transition_s(s),
-            memory_config=ttnn.L1_MEMORY_CONFIG,
-        )
+        end = time.time()
+        print(f'$$$YF: attention_pair_bias time: {end - start:.4f} seconds')
+
+        start = time.time()
+        s = ttnn.add(s, self.transition_s(s), memory_config=ttnn.L1_MEMORY_CONFIG)
+        end = time.time()
+        print(f'$$$YF: transition_s time: {end - start:.4f} seconds')
+
         return s, z
 
 
@@ -686,19 +659,16 @@ class AdaLN(Module):
             weight=self.s_norm_weight,
             epsilon=1e-5,
             compute_kernel_config=self.compute_kernel_config,
-            memory_config=ttnn.L1_MEMORY_CONFIG,
         )
         s_scale = ttnn.linear(
             s,
             self.s_scale_weight,
             bias=self.s_scale_bias,
             compute_kernel_config=self.compute_kernel_config,
-            memory_config=ttnn.L1_MEMORY_CONFIG,
         )
         s_scale = ttnn.sigmoid_accurate(s_scale)
         s_bias = ttnn.linear(
-            s, self.s_bias_weight, compute_kernel_config=self.compute_kernel_config,
-            memory_config=ttnn.L1_MEMORY_CONFIG,
+            s, self.s_bias_weight, compute_kernel_config=self.compute_kernel_config
         )
         a = ttnn.multiply(a, s_scale)
         a = ttnn.add(a, s_bias)
@@ -722,15 +692,14 @@ class ConditionedTransitionBlock(Module):
     def __call__(self, a: ttnn.Tensor, s: ttnn.Tensor) -> ttnn.Tensor:
         a = self.adaln(a, s)
         a_swish = ttnn.linear(
-            a, self.swish_weight, compute_kernel_config=self.compute_kernel_config,
+            a, self.swish_weight, compute_kernel_config=self.compute_kernel_config
         )
         dim = int(a_swish.shape[-1] / 2)
         a_swish, gates = a_swish[:, :, :dim], a_swish[:, :, dim:]
         gates = ttnn.silu(gates)
         a_swish = ttnn.multiply(gates, a_swish)
         a_b = ttnn.linear(
-            a, self.a_to_b_weight, compute_kernel_config=self.compute_kernel_config,
-            memory_config=ttnn.L1_MEMORY_CONFIG,
+            a, self.a_to_b_weight, compute_kernel_config=self.compute_kernel_config
         )
         b = ttnn.multiply(a_swish, a_b)
         s = ttnn.linear(
@@ -738,12 +707,10 @@ class ConditionedTransitionBlock(Module):
             self.output_projection_weight,
             bias=self.output_projection_bias,
             compute_kernel_config=self.compute_kernel_config,
-            memory_config=ttnn.L1_MEMORY_CONFIG,
         )
         s = ttnn.sigmoid_accurate(s)
         b_a = ttnn.linear(
-            b, self.b_to_a_weight, compute_kernel_config=self.compute_kernel_config,
-            memory_config=ttnn.L1_MEMORY_CONFIG,
+            b, self.b_to_a_weight, compute_kernel_config=self.compute_kernel_config
         )
         a = ttnn.multiply(s, b_a)
         return a
@@ -817,7 +784,10 @@ class DiffusionTransformer(Module):
         if self.z is None:
             self.z = z
         for layer in self.layers:
+            start = time.time()
             a = layer(a, s, self.z)
+            end = time.time()
+            print(f'$$$YF: DiffusionTransformerLayer time: {end - start:.4f} seconds')
         return a
 
 
@@ -844,12 +814,10 @@ class TorchWrapper(nn.Module):
             device=mesh_device.get_devices()[0],
             layout=ttnn.TILE_LAYOUT,
             dtype=ttnn.bfloat16,
-            #dtype=ttnn.float32,
         )
 
     def _to_torch(self, x: ttnn.Tensor) -> torch.Tensor:
         return torch.Tensor(ttnn.to_torch(x)).to(torch.float32)
-        #return torch.Tensor(ttnn.to_torch(x)).to(torch.float32)
 
     def __del__(self):
         global mesh_device
