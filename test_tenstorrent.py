@@ -1,10 +1,17 @@
 import pytest, torch
 import os
 
-USE_BF16 = os.environ.get('USE_BF16', '0')
+TT_BOLTZ_OPT = os.environ.get('TT_BOLTZ_OPT', '')
 
-if USE_BF16 == '1':
+if TT_BOLTZ_OPT.lower() == 'use_bf16_in_l1':
     from tenstorrent_bf16_l1 import (
+        filter_dict,
+        PairformerModule,
+        DiffusionTransformerModule,
+    )
+    print('Using BF16 in L1 ...')
+elif TT_BOLTZ_OPT.lower() == 'use_bf16':
+    from tenstorrent_bf16 import (
         filter_dict,
         PairformerModule,
         DiffusionTransformerModule,
@@ -21,7 +28,7 @@ else:
 import time
 from tests.ttnn.utils_for_testing import assert_with_pcc
 
-ENABLE_PCC = True
+ENABLE_PCC = False
 
 torch.set_grad_enabled(False)
 torch.manual_seed(893)

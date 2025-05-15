@@ -67,19 +67,8 @@ class TriangleMultiplication(Module):
             bias=self.in_norm_bias,
             epsilon=1e-5,
             compute_kernel_config=self.compute_kernel_config,
+            memory_config=ttnn.L1_MEMORY_CONFIG
         )
-        #x = ttnn.multiply(
-        #    ttnn.linear(
-        #        x_norm_in, self.in_p, compute_kernel_config=self.compute_kernel_config
-        #    ),
-        #    ttnn.sigmoid_accurate(
-        #        ttnn.linear(
-        #            x_norm_in,
-        #            self.in_g,
-        #            compute_kernel_config=self.compute_kernel_config,
-        #        )
-        #    ),
-        #)
 
         p_in_l1 = ttnn.linear(
             x_norm_in, self.in_p, compute_kernel_config=self.compute_kernel_config,
@@ -194,7 +183,7 @@ class TriangleAttention(Module):
             epsilon=1e-5,
             compute_kernel_config=self.compute_kernel_config,
         )
-        ttnn.deallocate(x)
+        #ttnn.deallocate(x)
 
         triangle_bias = ttnn.linear(
             x_in_l1,
