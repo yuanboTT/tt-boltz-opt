@@ -18,8 +18,7 @@ elif TT_BOLTZ_OPT.lower() == 'use_bf16':
     )
     print('Using BF16 ...')
 else:
-    #from tenstorrent_fp32 import (
-    from tenstorrent_bfp16_L1 import (
+    from tenstorrent_fp32 import (
         filter_dict,
         PairformerModule,
         DiffusionTransformerModule,
@@ -62,7 +61,7 @@ def test_pairformer(seq_len):
     mask = torch.ones(1, seq_len)
     pair_mask = mask[:, :, None] * mask[:, None, :]
 
-    #s_tt, z_tt = pairformer(s, z, mask, pair_mask)
+    s_tt, z_tt = pairformer(s, z, mask, pair_mask)
 
     start = time.time()
     s_tt, z_tt = pairformer(s, z, mask, pair_mask)
