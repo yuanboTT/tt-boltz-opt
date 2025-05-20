@@ -28,7 +28,7 @@ else:
 import time
 from tests.ttnn.utils_for_testing import assert_with_pcc
 
-ENABLE_PCC = False
+ENABLE_PCC = True
 
 torch.set_grad_enabled(False)
 torch.manual_seed(893)
@@ -61,7 +61,8 @@ def test_pairformer(seq_len):
     mask = torch.ones(1, seq_len)
     pair_mask = mask[:, :, None] * mask[:, None, :]
 
-    s_tt, z_tt = pairformer(s, z, mask, pair_mask)
+    if ENABLE_PCC:
+        s_tt, z_tt = pairformer(s, z, mask, pair_mask)
 
     start = time.time()
     s_tt, z_tt = pairformer(s, z, mask, pair_mask)
@@ -98,12 +99,13 @@ def test_token_transformer(seq_len):
     z = torch.load(f'test_data/token_transformer_z_input{seq_len}.pt')
     mask = torch.ones(1, seq_len)
 
-    a_tt = token_transformer(
-        a,
-        s,
-        z,
-        mask,
-    )
+    if ENABLE_PCC:
+        a_tt = token_transformer(
+            a,
+            s,
+            z,
+            mask,
+        )
 
     start = time.time()
     a_tt = token_transformer(
