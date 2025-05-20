@@ -18,7 +18,8 @@ elif TT_BOLTZ_OPT.lower() == 'use_bf16':
     )
     print('Using BF16 ...')
 else:
-    from tenstorrent_fp32 import (
+    #from tenstorrent_fp32 import (
+    from tenstorrent_bfp16_L1 import (
         filter_dict,
         PairformerModule,
         DiffusionTransformerModule,
@@ -41,7 +42,7 @@ state_dict = torch.load(
 def median_relative_error(a, b):
     return ((a - b).abs() / b.abs()).median().item()
 
-@pytest.mark.parametrize("seq_len", [100, 500, 1000])
+@pytest.mark.parametrize("seq_len", [100, 128, 256, 500, 1000])
 def test_pairformer(seq_len):
     pairformer = PairformerModule(
         n_blocks=2,
@@ -79,7 +80,7 @@ def test_pairformer(seq_len):
         assert_with_pcc(s_torch,        s_tt, pcc=0.9)
         assert_with_pcc(z_torch,        z_tt, pcc=0.9)
 
-@pytest.mark.parametrize("seq_len", [100, 500, 1000])
+@pytest.mark.parametrize("seq_len", [100, 128, 256, 500, 1000])
 def test_token_transformer(seq_len):
     token_transformer = DiffusionTransformerModule(
         n_layers=2,

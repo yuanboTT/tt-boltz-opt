@@ -18,7 +18,6 @@ def filter_dict(state_dict: dict, prefix: str, remove: str = "") -> dict:
         if key.startswith(prefix)
     }
 
-
 class Module:
     def __init__(
         self,
@@ -40,7 +39,6 @@ class Module:
             dtype=ttnn.bfloat16,
         )
 
-
 class TriangleMultiplication(Module):
     def __init__(
         self,
@@ -61,6 +59,8 @@ class TriangleMultiplication(Module):
 
     def __call__(self, x: ttnn.Tensor) -> ttnn.Tensor:
         #print(f'$$$YF: call TriangleMultiplication with tensor shape {x.shape}')
+
+        # Don't use x after, only x_norm_in 
         x_norm_in = ttnn.layer_norm(
             x,
             weight=self.in_norm_weight,
@@ -70,84 +70,81 @@ class TriangleMultiplication(Module):
             memory_config=ttnn.L1_MEMORY_CONFIG
         )
 
-        p_in_l1 = ttnn.linear(
-            x_norm_in, self.in_p, compute_kernel_config=self.compute_kernel_config,
-            memory_config=ttnn.L1_MEMORY_CONFIG
-            )
         g_in_l1 = ttnn.linear(
-            x_norm_in, self.in_g, compute_kernel_config=self.compute_kernel_config,
+            x_norm_in, 
+            self.in_g, 
+            compute_kernel_config=self.compute_kernel_config,
             memory_config=ttnn.L1_MEMORY_CONFIG
-            )
+        )
         s_in_l1 = ttnn.sigmoid_accurate(g_in_l1)
-
         ttnn.deallocate(g_in_l1)
+        s_in_l1 = ttnn.reallocate(s_in_l1)
+
+        p_in_l1 = ttnn.linear(
+            x_norm_in, 
+            self.in_p, 
+            compute_kernel_config=self.compute_kernel_config,
+            #memory_config=ttnn.L1_MEMORY_CONFIG
+        )
+        p_in_l1 = ttnn.reallocate(p_in_l1)
 
         x_in_l1 = ttnn.multiply(p_in_l1, s_in_l1)
 
         ttnn.deallocate(s_in_l1)
         ttnn.deallocate(p_in_l1)
-        x = ttnn.reallocate(x_in_l1)
+        x_in_l1 = ttnn.reallocate(x_in_l1)
 
-        dim = int(x.shape[-1] / 2)
-        x = ttnn.permute(
+        dim = int(x_in_l1.shape[-1] / 2)
+        x_in_l1 = ttnn.permute(
             ttnn.matmul(
                 ttnn.permute(
-                    x[:, :, :, :dim], (0, 3) + ((2, 1) if self.ending else (1, 2))
+                    x_in_l1[:, :, :, :dim], (0, 3) + ((2, 1) if self.ending else (1, 2))
                 ),
                 ttnn.permute(
-                    x[:, :, :, dim:], (0, 3) + ((1, 2) if self.ending else (2, 1))
+                    x_in_l1[:, :, :, dim:], (0, 3) + ((1, 2) if self.ending else (2, 1))
                 ),
                 compute_kernel_config=self.compute_kernel_config,
                 memory_config=ttnn.L1_MEMORY_CONFIG,
             ),
             (0, 2, 3, 1),
         )
-        x_norm_out = ttnn.layer_norm(
-            x,
+
+        x_norm_out_l1 = ttnn.layer_norm(
+            x_in_l1,
             weight=self.out_norm_weight,
             bias=self.out_norm_bias,
             epsilon=1e-5,
             compute_kernel_config=self.compute_kernel_config,
+            memory_config=ttnn.L1_MEMORY_CONFIG,
         )
 
-        ttnn.deallocate(x)
+        ttnn.deallocate(x_in_l1)
+        x_norm_out_l1 = ttnn.reallocate(x_norm_out_l1)
 
-        #x = ttnn.multiply(
-        #    ttnn.linear(
-        #        x_norm_out, self.out_p, compute_kernel_config=self.compute_kernel_config
-        #    ),
-        #    ttnn.sigmoid_accurate(
-        #        ttnn.linear(
-        #            x_norm_in,
-        #            self.out_g,
-        #            compute_kernel_config=self.compute_kernel_config,
-        #        )
-        #    ),
-        #)
-
-        p_in_l1 = ttnn.linear(
-            x_norm_out, self.out_p, compute_kernel_config=self.compute_kernel_config,
+        g_out_l1 = ttnn.linear(
+            x_norm_in, 
+            self.out_g, 
+            compute_kernel_config=self.compute_kernel_config,
             memory_config=ttnn.L1_MEMORY_CONFIG
             )
+        s_out_l1 = ttnn.sigmoid_accurate(g_out_l1)
+        ttnn.deallocate(g_out_l1)
+        ttnn.deallocate(x_norm_in)
+        s_out_l1 = ttnn.reallocate(s_out_l1)
 
-        g_in_l1 = ttnn.linear(
-            x_norm_in, self.out_g, compute_kernel_config=self.compute_kernel_config,
+        p_out_l1 = ttnn.linear(
+            x_norm_out_l1, 
+            self.out_p, 
+            compute_kernel_config=self.compute_kernel_config,
             memory_config=ttnn.L1_MEMORY_CONFIG
-            )
+        )
 
-        s_in_l1 = ttnn.sigmoid_accurate(g_in_l1)
+        x_out_l1 = ttnn.multiply(p_out_l1, s_out_l1)
+        ttnn.deallocate(s_out_l1)
+        ttnn.deallocate(p_out_l1)
+        out_x_l1 = ttnn.reallocate(x_out_l1)
 
-        ttnn.deallocate(g_in_l1)
-
-        x_in_l1 = ttnn.multiply(p_in_l1, s_in_l1)
-
-        ttnn.deallocate(s_in_l1)
-        ttnn.deallocate(p_in_l1)
-        
-        x = ttnn.reallocate(x_in_l1)
-
-        return x
-
+        return out_x_l1
 
 class TriangleAttention(Module):
     def __init__(
@@ -173,17 +170,19 @@ class TriangleAttention(Module):
 
     def __call__(self, x: ttnn.Tensor) -> ttnn.Tensor:
         #print(f'$$$YF: call TriangleAttention with tensor shape {x.shape}')
+
         x = ttnn.reshape(x, tuple(x.shape)[1:])
         if self.ending:
             x = ttnn.permute(x, (1, 0, 2))  # THIS CAUSES CACHE -> RESHAPE PROBLEM
+
         x_in_l1 = ttnn.layer_norm(
             x,
             weight=self.layer_norm_weight,
             bias=self.layer_norm_bias,
             epsilon=1e-5,
             compute_kernel_config=self.compute_kernel_config,
+            #memory_config=ttnn.L1_MEMORY_CONFIG
         )
-        #ttnn.deallocate(x)
 
         triangle_bias = ttnn.linear(
             x_in_l1,
@@ -191,6 +190,7 @@ class TriangleAttention(Module):
             compute_kernel_config=self.compute_kernel_config,
             memory_config=ttnn.L1_MEMORY_CONFIG
         )
+
         triangle_bias = ttnn.reshape(triangle_bias, (1, *triangle_bias.shape))
         triangle_bias = ttnn.permute(triangle_bias, (3, 0, 1, 2))
         two_devices = mesh_device.get_num_devices() == 2
@@ -281,8 +281,11 @@ class TriangleAttention(Module):
                 )
             a_in_mem = ttnn.matmul(q, k, compute_kernel_config=self.compute_kernel_config, memory_config=ttnn.DRAM_MEMORY_CONFIG)
 
+            # No valid x_chunk, q, k after
+            ttnn.deallocate(x_chunk)
             ttnn.deallocate(q)
             ttnn.deallocate(k)
+            v = ttnn.reallocate(v)
 
             a = ttnn.multiply(a_in_mem, self.head_dim**-0.5)
             a = ttnn.add(a, triangle_bias)
@@ -358,6 +361,7 @@ class AttentionPairBias(Module):
                 bias=self.norm_s_bias,
                 epsilon=1e-5,
                 compute_kernel_config=self.compute_kernel_config,
+                #memory_config=ttnn.L1_MEMORY_CONFIG
             )
         q = ttnn.linear(
             s,
@@ -391,6 +395,7 @@ class AttentionPairBias(Module):
             bias=self.z_norm_bias,
             epsilon=1e-5,
             compute_kernel_config=self.compute_kernel_config,
+            #memory_config=ttnn.L1_MEMORY_CONFIG
         )
         z = ttnn.linear(
             z, self.z_weight, compute_kernel_config=self.compute_kernel_config,
@@ -441,6 +446,7 @@ class Transition(Module):
 
     def __call__(self, x: ttnn.Tensor) -> ttnn.Tensor:
         #print(f'$$$YF: call Transition with tensor shape {x.shape}')
+
         def f(x):
             x_norm = ttnn.layer_norm(
                 x,
@@ -538,62 +544,76 @@ class PairformerLayer(Module):
     ) -> Tuple[ttnn.Tensor, ttnn.Tensor]:
 
         start = time.time()
+        triangle_start_out = self.triangle_multiplication_start(z)
         z = ttnn.add(
             z,
-            self.triangle_multiplication_start(z),
-            memory_config=ttnn.L1_MEMORY_CONFIG
+            triangle_start_out,
         )
         end = time.time()
         print(f'$$$YF: triangle_multiplication_start time: {end - start:.4f} seconds')
+        ttnn.deallocate(triangle_start_out)
 
         start = time.time()
+        triangle_end_out = self.triangle_multiplication_end(z)
         z = ttnn.add(
             z,
-            self.triangle_multiplication_end(z),
-            memory_config=ttnn.L1_MEMORY_CONFIG
+            triangle_end_out,
         )
         end = time.time()
         print(f'$$$YF: triangle_multiplication_end time: {end - start:.4f} seconds')
+        ttnn.deallocate(triangle_end_out)
 
         start = time.time()
+        triangle_attention_start_out = self.triangle_attention_start(z)
         z = ttnn.add(
             z,
-            self.triangle_attention_start(z),
-            memory_config=ttnn.L1_MEMORY_CONFIG
+            triangle_attention_start_out,
         )
         end = time.time()
         print(f'$$$YF: triangle_attention_start time: {end - start:.4f} seconds')
+        ttnn.deallocate(triangle_attention_start_out)
 
         start = time.time()
+        triangle_attention_end_out = self.triangle_attention_end(z)
         z = ttnn.add(
             z,
-            self.triangle_attention_end(z),
-            memory_config=ttnn.L1_MEMORY_CONFIG
+            triangle_attention_end_out,
         )
         end = time.time()
         print(f'$$$YF: triangle_attention_end time: {end - start:.4f} seconds')
+        ttnn.deallocate(triangle_attention_end_out)
 
         start = time.time()
-        z = ttnn.add(z, self.transition_z(z), memory_config=ttnn.L1_MEMORY_CONFIG)
+        transition_z_out = self.transition_z(z)
+        z = ttnn.add(
+            z, 
+            transition_z_out, 
+        )
         end = time.time()
         print(f'$$$YF: transition_z time: {end - start:.4f} seconds')
+        ttnn.deallocate(transition_z_out)
 
         start = time.time()
+        attention_pair_bias_out = self.attention_pair_bias(s, z)
         s = ttnn.add(
             s,
-            self.attention_pair_bias(s, z),
-            memory_config=ttnn.L1_MEMORY_CONFIG
+            attention_pair_bias_out,
         )
         end = time.time()
         print(f'$$$YF: attention_pair_bias time: {end - start:.4f} seconds')
+        ttnn.deallocate(attention_pair_bias_out)
 
         start = time.time()
-        s = ttnn.add(s, self.transition_s(s), memory_config=ttnn.L1_MEMORY_CONFIG)
+        transition_s_out = self.transition_s(s)
+        s = ttnn.add(
+            s, 
+            transition_s_out, 
+        )
         end = time.time()
         print(f'$$$YF: transition_s time: {end - start:.4f} seconds')
+        ttnn.deallocate(transition_s_out)
 
         return s, z
-
 
 class Pairformer(Module):
     def __init__(
