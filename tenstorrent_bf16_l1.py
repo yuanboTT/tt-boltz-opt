@@ -660,28 +660,30 @@ class AdaLN(Module):
         self.s_bias_weight = self.torch_to_tt("s_bias.weight")
 
     def __call__(self, a: ttnn.Tensor, s: ttnn.Tensor) -> ttnn.Tensor:
-        a = ttnn.layer_norm(
-            a, epsilon=1e-5, compute_kernel_config=self.compute_kernel_config
+        a_in_l1 = ttnn.layer_norm(
+            a, epsilon=1e-5, compute_kernel_config=self.compute_kernel_config,
+            memory_config=ttnn.L1_MEMORY_CONFIG
         )
-        s = ttnn.layer_norm(
+        s_in_l1 = ttnn.layer_norm(
             s,
             weight=self.s_norm_weight,
             epsilon=1e-5,
             compute_kernel_config=self.compute_kernel_config,
+            memory_config=ttnn.L1_MEMORY_CONFIG
         )
         s_scale = ttnn.linear(
-            s,
+            s_in_l1,
             self.s_scale_weight,
             bias=self.s_scale_bias,
             compute_kernel_config=self.compute_kernel_config,
         )
         s_scale = ttnn.sigmoid_accurate(s_scale)
         s_bias = ttnn.linear(
-            s, self.s_bias_weight, compute_kernel_config=self.compute_kernel_config
+            s_in_l1, self.s_bias_weight, compute_kernel_config=self.compute_kernel_config
         )
-        a = ttnn.multiply(a, s_scale)
-        a = ttnn.add(a, s_bias)
-        return a
+        a_in_l1 = ttnn.multiply(a_in_l1, s_scale)
+        a_in_l1 = ttnn.add(a_in_l1, s_bias)
+        return a_in_l1
 
 
 class ConditionedTransitionBlock(Module):
@@ -754,19 +756,19 @@ class DiffusionTransformerLayer(Module):
     def __call__(self, a: ttnn.Tensor, s: ttnn.Tensor, z: ttnn.Tensor) -> ttnn.Tensor:
         b = self.adaln(a, s)
         b = self.attn_pair_bias(b, z)
-        s_o = ttnn.linear(
+        s_o_in_l1 = ttnn.linear(
             s,
             self.output_projection_weight,
             bias=self.output_projection_bias,
             compute_kernel_config=self.compute_kernel_config,
+            memory_config=ttnn.L1_MEMORY_CONFIG
         )
-        s_o = ttnn.sigmoid_accurate(s_o)
-        b = ttnn.multiply(s_o, b)
+        s_o_in_l1 = ttnn.sigmoid_accurate(s_o_in_l1)
+        b = ttnn.multiply(s_o_in_l1, b)
         a = ttnn.add(a, b)
         a_t = self.transition(a, s)
         a = ttnn.add(a, a_t)
         return a
-
 
 class DiffusionTransformer(Module):
     def __init__(
