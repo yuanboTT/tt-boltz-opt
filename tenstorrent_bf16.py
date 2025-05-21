@@ -480,55 +480,55 @@ class PairformerLayer(Module):
         self, s: ttnn.Tensor, z: ttnn.Tensor
     ) -> Tuple[ttnn.Tensor, ttnn.Tensor]:
 
-        start = time.time()
+        #start = time.time()
         z = ttnn.add(
             z,
             self.triangle_multiplication_start(z),
         )
-        end = time.time()
-        print(f'$$$YF: triangle_multiplication_start time: {end - start:.4f} seconds')
+        #end = time.time()
+        #print(f'$$$YF: triangle_multiplication_start time: {end - start:.4f} seconds')
 
-        start = time.time()
+        #start = time.time()
         z = ttnn.add(
             z,
             self.triangle_multiplication_end(z),
         )
-        end = time.time()
-        print(f'$$$YF: triangle_multiplication_end time: {end - start:.4f} seconds')
+        #end = time.time()
+        #print(f'$$$YF: triangle_multiplication_end time: {end - start:.4f} seconds')
 
-        start = time.time()
+        #start = time.time()
         z = ttnn.add(
             z,
             self.triangle_attention_start(z),
         )
-        end = time.time()
-        print(f'$$$YF: triangle_attention_start time: {end - start:.4f} seconds')
+        #end = time.time()
+        #print(f'$$$YF: triangle_attention_start time: {end - start:.4f} seconds')
 
-        start = time.time()
+        #start = time.time()
         z = ttnn.add(
             z,
             self.triangle_attention_end(z),
         )
-        end = time.time()
-        print(f'$$$YF: triangle_attention_end time: {end - start:.4f} seconds')
+        #end = time.time()
+        #print(f'$$$YF: triangle_attention_end time: {end - start:.4f} seconds')
 
-        start = time.time()
+        #start = time.time()
         z = ttnn.add(z, self.transition_z(z))
-        end = time.time()
-        print(f'$$$YF: transition_z time: {end - start:.4f} seconds')
+        #end = time.time()
+        #print(f'$$$YF: transition_z time: {end - start:.4f} seconds')
 
-        start = time.time()
+        #start = time.time()
         s = ttnn.add(
             s,
             self.attention_pair_bias(s, z),
         )
-        end = time.time()
-        print(f'$$$YF: attention_pair_bias time: {end - start:.4f} seconds')
+        #end = time.time()
+        #print(f'$$$YF: attention_pair_bias time: {end - start:.4f} seconds')
 
-        start = time.time()
+        #start = time.time()
         s = ttnn.add(s, self.transition_s(s))
-        end = time.time()
-        print(f'$$$YF: transition_s time: {end - start:.4f} seconds')
+        #end = time.time()
+        #print(f'$$$YF: transition_s time: {end - start:.4f} seconds')
 
         return s, z
 

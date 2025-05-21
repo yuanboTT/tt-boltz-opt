@@ -543,74 +543,74 @@ class PairformerLayer(Module):
         self, s: ttnn.Tensor, z: ttnn.Tensor
     ) -> Tuple[ttnn.Tensor, ttnn.Tensor]:
 
-        start = time.time()
+        #start = time.time()
         triangle_start_out = self.triangle_multiplication_start(z)
         z = ttnn.add(
             z,
             triangle_start_out,
         )
-        end = time.time()
-        print(f'$$$YF: triangle_multiplication_start time: {end - start:.4f} seconds')
+        #end = time.time()
+        #print(f'$$$YF: triangle_multiplication_start time: {end - start:.4f} seconds')
         ttnn.deallocate(triangle_start_out)
 
-        start = time.time()
+        #start = time.time()
         triangle_end_out = self.triangle_multiplication_end(z)
         z = ttnn.add(
             z,
             triangle_end_out,
         )
-        end = time.time()
-        print(f'$$$YF: triangle_multiplication_end time: {end - start:.4f} seconds')
+        #end = time.time()
+        #print(f'$$$YF: triangle_multiplication_end time: {end - start:.4f} seconds')
         ttnn.deallocate(triangle_end_out)
 
-        start = time.time()
+        #start = time.time()
         triangle_attention_start_out = self.triangle_attention_start(z)
         z = ttnn.add(
             z,
             triangle_attention_start_out,
         )
-        end = time.time()
-        print(f'$$$YF: triangle_attention_start time: {end - start:.4f} seconds')
+        #end = time.time()
+        #print(f'$$$YF: triangle_attention_start time: {end - start:.4f} seconds')
         ttnn.deallocate(triangle_attention_start_out)
 
-        start = time.time()
+        #start = time.time()
         triangle_attention_end_out = self.triangle_attention_end(z)
         z = ttnn.add(
             z,
             triangle_attention_end_out,
         )
-        end = time.time()
-        print(f'$$$YF: triangle_attention_end time: {end - start:.4f} seconds')
+        #end = time.time()
+        #print(f'$$$YF: triangle_attention_end time: {end - start:.4f} seconds')
         ttnn.deallocate(triangle_attention_end_out)
 
-        start = time.time()
+        #start = time.time()
         transition_z_out = self.transition_z(z)
         z = ttnn.add(
             z, 
             transition_z_out, 
         )
-        end = time.time()
-        print(f'$$$YF: transition_z time: {end - start:.4f} seconds')
+        #end = time.time()
+        #print(f'$$$YF: transition_z time: {end - start:.4f} seconds')
         ttnn.deallocate(transition_z_out)
 
-        start = time.time()
+        #start = time.time()
         attention_pair_bias_out = self.attention_pair_bias(s, z)
         s = ttnn.add(
             s,
             attention_pair_bias_out,
         )
-        end = time.time()
-        print(f'$$$YF: attention_pair_bias time: {end - start:.4f} seconds')
+        #end = time.time()
+        #print(f'$$$YF: attention_pair_bias time: {end - start:.4f} seconds')
         ttnn.deallocate(attention_pair_bias_out)
 
-        start = time.time()
+        #start = time.time()
         transition_s_out = self.transition_s(s)
         s = ttnn.add(
             s, 
             transition_s_out, 
         )
-        end = time.time()
-        print(f'$$$YF: transition_s time: {end - start:.4f} seconds')
+        #end = time.time()
+        #print(f'$$$YF: transition_s time: {end - start:.4f} seconds')
         ttnn.deallocate(transition_s_out)
 
         return s, z
@@ -795,10 +795,10 @@ class DiffusionTransformer(Module):
         if self.z is None:
             self.z = z
         for layer in self.layers:
-            start = time.time()
+            #start = time.time()
             a = layer(a, s, self.z)
-            end = time.time()
-            print(f'$$$YF: DiffusionTransformerLayer time: {end - start:.4f} seconds')
+            #end = time.time()
+            #print(f'$$$YF: DiffusionTransformerLayer time: {end - start:.4f} seconds')
         return a
 
 
